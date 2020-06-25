@@ -8,16 +8,17 @@ import tensorflow as tf
 import locality_aware_nms as nms_locality
 # import lanms
 from bktree import BKTree, levenshtein, list_words
+from util.cmd import cmd
 
 # tf.app.flags.DEFINE_string('test_data_path', '../../OCR_dataset/SROIE2019/test_2019_img/', '')
-# tf.app.flags.DEFINE_string('test_data_path', '../../OCR_dataset/ICDAR_2015/test_img/', '')
-tf.app.flags.DEFINE_string('test_data_path', '../../OCR_dataset/funsdata/renamed_testing_data/images/', '')
+tf.app.flags.DEFINE_string('test_data_path', '../../OCR_dataset/ICDAR_2015/test_img/', '')
+# tf.app.flags.DEFINE_string('test_data_path', '../../OCR_dataset/funsdata/renamed_testing_data/images/', '')
 
 tf.app.flags.DEFINE_string('gpu_list', '0', '')
-tf.app.flags.DEFINE_string('checkpoint_path', '../../FOTS_TF/checkpoints/', '')
-# tf.app.flags.DEFINE_string('output_dir', 'outputs/res_19/', '')
+tf.app.flags.DEFINE_string('checkpoint_path', './checkpoints_acc/', '')
+tf.app.flags.DEFINE_string('output_dir', 'outputs/res_15_acc/', '')
 # tf.app.flags.DEFINE_string('output_dir', 'outputs/res_15/', '')
-tf.app.flags.DEFINE_string('output_dir', 'outputs/res_funs/', '')
+# tf.app.flags.DEFINE_string('output_dir', 'outputs/res_funs_acc/', '')
 
 tf.app.flags.DEFINE_bool('no_write_images', False, 'do not write images')
 # tf.app.flags.DEFINE_bool('use_vacab', True, 'strong, normal or weak')
@@ -222,6 +223,7 @@ def main(argv=None):
             im_fn_list = get_images()
             for im_fn in im_fn_list:
                 fl = ['../../OCR_dataset/SROIE2019/test_2019_img/img_245.jpg','../../OCR_dataset/SROIE2019/test_2019_img/img_170.jpg',
+                '../../OCR_dataset/SROIE2019/test_2019_img/img_250.jpg','../../OCR_dataset/SROIE2019/test_2019_img/img_22.jpg',
                 '../../OCR_dataset/funsdata/renamed_testing_data/images/img_2.png']
                 if im_fn in fl: continue
                 print(im_fn)
@@ -322,10 +324,10 @@ def main(argv=None):
                     if im_txt is not None:
                         cv2.imwrite(img_path, im_txt)
 
-                cmd = 'cd %s;zip -q %s %s/*'%(res_file_path, 'rec.zip', '*.txt')
-                util.cmd.cmd(cmd)
+                cmd1 = 'cd %s;zip -q %s %s/*'%(res_file_path, 'rec.zip', '*.txt')
+                cmd(cmd1)
                 cmd2 = 'cd %s;zip -q %s %s/*'%(res_file_path_2, 'det.zip', '*.txt')
-                util.cmd.cmd(cmd2)
+                cmd(cmd2)
 
 if __name__ == '__main__':
     tf.app.run()

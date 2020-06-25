@@ -2,18 +2,17 @@ import time
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import slim
-from tensorflow.python.keras.optimizers import Adam
 
 tf.app.flags.DEFINE_integer('input_size', 512, '')
 tf.app.flags.DEFINE_integer('batch_size_per_gpu', 1, '')
-tf.app.flags.DEFINE_integer('num_readers', 2, '')
+tf.app.flags.DEFINE_integer('num_readers', 4, '')
 tf.app.flags.DEFINE_float('learning_rate', 0.0001, '')
 tf.app.flags.DEFINE_integer('max_steps', 150001, '')
 tf.app.flags.DEFINE_float('moving_average_decay', 0.997, '')
 tf.app.flags.DEFINE_string('gpu_list', '0', '')
-tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_acc/', '')
-tf.app.flags.DEFINE_boolean('restore', True, 'whether to resotre from checkpoint')
-tf.app.flags.DEFINE_integer('save_checkpoint_steps', 500, '')
+tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_1/', '')
+tf.app.flags.DEFINE_boolean('restore',False, 'whether to resotre from checkpoint')
+tf.app.flags.DEFINE_integer('save_checkpoint_steps', 1000, '')
 tf.app.flags.DEFINE_integer('save_summary_steps', 100, '')
 tf.app.flags.DEFINE_string('pretrained_model_path', None, '')
 tf.app.flags.DEFINE_integer('train_stage', 2, '0-train detection only; 1-train recognition only; 2-train end-to-end; 3-train end-to-end absolutely')
@@ -22,13 +21,10 @@ tf.app.flags.DEFINE_string('training_gt_data_dir', default='/home/ist/Desktop/OC
 
 from data_provider import data_generator
 from module import Backbone_branch, Recognition_branch, RoI_rotate
-from module.accum_optimizer import AccumOptimizer
 
 FLAGS = tf.app.flags.FLAGS
 
 # gpus = list(range(len(FLAGS.gpu_list.split(','))))
-
-# tf.enable_eager_execution()
 
 detect_part = Backbone_branch.Backbone(is_training=True)
 roi_rotate_part = RoI_rotate.RoIRotate()
@@ -92,7 +88,6 @@ def main(argv=None):
     learning_rate = FLAGS.learning_rate
     # add summary
     tf.summary.scalar('learning_rate', learning_rate)
-    #opt = AccumOptimizer(Adam(learning_rate, clipnorm = 1.),4)
     opt = tf.train.AdamOptimizer(learning_rate)
 
     d_loss, r_loss, model_loss = compute_loss(f_score, f_geometry, recognition_logits, input_score_maps, input_geo_maps, input_training_masks, input_transcription, input_box_widths)
@@ -101,50 +96,21 @@ def main(argv=None):
     total_loss = tf.add_n([model_loss] + tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
     # total_loss = model_loss
     batch_norm_updates_op = tf.group(*tf.get_collection(tf.GraphKeys.UPDATE_OPS))
-
-    # tf.reset_default_graph()#清除默认图的堆栈，并设置全局图为默认值
-    
     if FLAGS.train_stage == 1:
         print("Train recognition branch only!")
         recog_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='recog')
         # grads = opt.compute_gradients(total_loss, recog_vars)
         grads = opt.compute_gradients(total_loss)
     else:
-        # with tf.GradientTape() as tape:
-            # accum_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='recog')
-            # grads = opt.compute_gradients(d_loss)
-            # grads = opt.compute_gradients(total_loss)
-        #
-        tvs = tf.trainable_variables()
-        accum_vars = [tf.Variable(tf.zeros_like(tv.initialized_value()), trainable=False) for tv in tvs]
-        # zero_ops = [tv.assign(tf.zeros_like(tv)) for tv in accum_vars]
-        accumulator_cnt = tf.Variable(0.0, trainable=False)
-        grads = opt.compute_gradients(total_loss, tvs)
-        # print(tf.shape(grads[0]))
-        # print(grads[0][0].shape)
-        # print(accum_vars[0].shape)
-        accum_ops = [accum_vars[i].assign_add(grad[0]) for i, grad in enumerate(grads)]
-        accum_ops.append(accumulator_cnt.assign_add(1.0))
-        variable_names = [v.name for v in tf.trainable_variables()]
-        print("------------------------------------") 
-        print(variable_names)
-        print("------------------------------------")
-
+        grads = opt.compute_gradients(total_loss)
     # greds clip
     for i, (g, v) in enumerate(grads):
         if g is not None:
             grads[i] = (tf.clip_by_norm(g, 1.0), v)
-            # if((i + 1) % 4) == 0:
-            #     opt.step()
-            #     opt.zero_grad()
-    # apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
-    #
-    apply_gradient_op = opt.apply_gradients([(accum_vars[i]/accumulator_cnt, gv[1]) for i, gv in enumerate(grads)], global_step=global_step)
-    zero_ops = [tv.assign(tf.zeros_like(tv)) for tv in accum_vars]
-    zero_ops.append(accumulator_cnt.assign(0.0))
+    apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
     summary_op = tf.summary.merge_all()
-    # save moving average 滑动平均
+    # save moving average
     variable_averages = tf.train.ExponentialMovingAverage(
         FLAGS.moving_average_decay, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
@@ -152,18 +118,10 @@ def main(argv=None):
     with tf.control_dependencies([variables_averages_op, apply_gradient_op, batch_norm_updates_op]):
         train_op = tf.no_op(name='train_op')
 
-    #tf.reset_default_graph()
-
-    #global_names = [v.name for v in tf.global_variables()]
-    #print(global_names)
-    #print("==========================================")
-    #saver_restore = tf.train.import_meta_graph("checkpoints/model.ckpt-733268.meta")
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=1)
     summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path, tf.get_default_graph())
 
     init = tf.global_variables_initializer()
-
-    #tf.reset_default_graph()
 
     if FLAGS.pretrained_model_path is not None:
         if os.path.isdir(FLAGS.pretrained_model_path):
@@ -179,9 +137,6 @@ def main(argv=None):
         if FLAGS.restore:
             print('continue training from previous checkpoint')
             ckpt = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
-            #names = [v.name for v in ckpt]
-            #print(names)
-            #saver_restore.restore(sess, ckpt)
             saver.restore(sess, ckpt)
         else:
             sess.run(init)
@@ -194,25 +149,20 @@ def main(argv=None):
 
         start = time.time()
         for step in range(FLAGS.max_steps):
-            #
-            sess.run(zero_ops)
-            for j in range(8):
-                data = next(dg)
-                inp_dict = {input_images: data[0],
-                            input_score_maps: data[2],
-                            input_geo_maps: data[3],
-                            input_training_masks: data[4],
-                            input_transform_matrix: data[5],
-                            input_box_widths: data[7],
-                            input_transcription: data[8]}
+            data = next(dg)
+            inp_dict = {input_images: data[0],
+                        input_score_maps: data[2],
+                        input_geo_maps: data[3],
+                        input_training_masks: data[4],
+                        input_transform_matrix: data[5],
+                        input_box_widths: data[7],
+                        input_transcription: data[8]}
 
-                for i in range(FLAGS.batch_size_per_gpu):
-                    inp_dict[input_box_masks[i]] = data[6][i]
-            
-                sess.run(accum_ops, feed_dict=inp_dict)
+            for i in range(FLAGS.batch_size_per_gpu):
+                inp_dict[input_box_masks[i]] = data[6][i]
+
 
             dl, rl, tl, _ = sess.run([d_loss, r_loss, total_loss, train_op], feed_dict=inp_dict)
-
             if np.isnan(tl):
                 print('Loss diverged, stop training')
                 break
